@@ -1,0 +1,5 @@
+{
+  "name": "P2P 3D Arena",
+  "description": "A completely peer-to-peer 3D multiplayer game using WebRTC. Host a game and invite friends to join a physics-based arena without any central game server.",
+  "requestFramePermissions": []
+}
