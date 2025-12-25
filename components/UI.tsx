@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 import React, { useState, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { GameStatus, PlayerState } from '../types';
@@ -226,7 +227,7 @@ export const UI = () => {
                     type="text" 
                     placeholder="Enter Room ID" 
                     value={targetId}
-                    onChange={(e) => setTargetId(e.target.value)}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTargetId(e.target.value)}
                     onClick={handleInputClick}
                     className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-600 focus:outline-none focus:border-purple-500 transition font-mono text-sm"
                 />
