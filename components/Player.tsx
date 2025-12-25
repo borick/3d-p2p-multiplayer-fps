@@ -75,8 +75,7 @@ export const LocalPlayer = () => {
   useFrame(() => {
     if (!ref.current) return;
 
-    // Only move if locked (prevents moving while typing in url bar etc if that were possible, or just good practice)
-    // Note: In strict mode we might want to allow movement without lock, but for FPS it's better to require it
+    // Only move if locked
     const isLocked = document.pointerLockElement === gl.domElement;
     
     // --- Movement ---
@@ -146,7 +145,12 @@ export const LocalPlayer = () => {
             <meshBasicMaterial visible={false} />
         </mesh>
         
-        {/* Using makeDefault helps ensure it grabs the camera correctly */}
+        {/* 
+           PointerLockControls from drei.
+           We assume the user must click the canvas (game) to start locking.
+           By stopping propagation on UI elements, we prevent accidental locking/relocking 
+           during UI interaction which causes the "exited lock before request completed" error.
+        */}
         <PointerLockControls makeDefault />
     </>
   );

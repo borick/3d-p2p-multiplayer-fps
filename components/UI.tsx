@@ -1,24 +1,38 @@
 import React, { useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { GameStatus, PlayerState } from '../types';
-import { Copy, Users, Play, Radio, AlertCircle, Crosshair, Share2 } from 'lucide-react';
+import { Copy, Users, Play, Radio, AlertCircle, Share2 } from 'lucide-react';
 
 export const UI = () => {
   const { status, hostGame, joinGame, myId, error, disconnect, players } = useGameStore();
   const [targetId, setTargetId] = useState('');
   const [copySuccess, setCopySuccess] = useState('');
 
-  const handleHost = () => hostGame();
+  const handleHost = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    hostGame();
+  };
   
-  const handleJoin = () => {
+  const handleJoin = (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!targetId.trim()) return;
     joinGame(targetId.trim());
   };
 
-  const copyToClipboard = () => {
+  const handleDisconnect = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    disconnect();
+  };
+
+  const copyToClipboard = (e: React.MouseEvent) => {
+    e.stopPropagation();
     navigator.clipboard.writeText(myId);
     setCopySuccess('Copied!');
     setTimeout(() => setCopySuccess(''), 2000);
+  };
+
+  const handleInputClick = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent locking when clicking input
   };
 
   if (status === GameStatus.PLAYING) {
@@ -80,7 +94,7 @@ export const UI = () => {
         {/* HUD Bottom Right */}
         <div className="absolute bottom-4 right-4 pointer-events-auto">
           <button 
-            onClick={disconnect}
+            onClick={handleDisconnect}
             className="bg-red-500/20 hover:bg-red-500/40 text-red-200 border border-red-500/50 px-6 py-2 rounded-lg font-bold backdrop-blur-sm transition text-sm"
           >
             DISCONNECT
@@ -88,8 +102,8 @@ export const UI = () => {
         </div>
         
         {/* Controls Hint */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-white/50 text-xs font-mono text-center">
-          <div className="mb-1 text-yellow-400 font-bold animate-pulse">CLICK ANYWHERE TO START</div>
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-white/50 text-xs font-mono text-center pointer-events-none">
+          <div className="mb-1 text-yellow-400 font-bold animate-pulse">CLICK BACKGROUND TO START</div>
           <div className="mb-1">WASD Move • SPACE Jump • CLICK Shoot</div>
           <div>ESC to release mouse</div>
         </div>
@@ -156,9 +170,10 @@ export const UI = () => {
                     placeholder="Enter Room ID" 
                     value={targetId}
                     onChange={(e) => setTargetId(e.target.value)}
+                    onClick={handleInputClick}
                     className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-600 focus:outline-none focus:border-purple-500 transition font-mono text-sm"
                 />
-                <Share2 className="absolute right-3 top-3.5 w-4 h-4 text-gray-500" />
+                <Share2 className="absolute right-3 top-3.5 w-4 h-4 text-gray-500 pointer-events-none" />
               </div>
               <button 
                 onClick={handleJoin}
@@ -177,7 +192,7 @@ export const UI = () => {
         )}
       </div>
       
-      <div className="absolute bottom-4 text-xs text-gray-600 font-mono">
+      <div className="absolute bottom-4 text-xs text-gray-600 font-mono pointer-events-none">
         Pointer Lock Required • WebRTC P2P
       </div>
     </div>
