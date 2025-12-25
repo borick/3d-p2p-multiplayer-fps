@@ -1,12 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { GameStatus, PlayerState } from '../types';
-import { Copy, Users, Play, Radio, AlertCircle, Share2 } from 'lucide-react';
+import { Copy, Users, Play, Radio, AlertCircle, Share2, MousePointer2, Loader2 } from 'lucide-react';
 
 export const UI = () => {
   const { status, hostGame, joinGame, myId, error, disconnect, players } = useGameStore();
   const [targetId, setTargetId] = useState('');
   const [copySuccess, setCopySuccess] = useState('');
+  const [isLocked, setIsLocked] = useState(false);
+
+  // Monitor Pointer Lock State
+  useEffect(() => {
+    const handleLockChange = () => {
+        setIsLocked(!!document.pointerLockElement);
+    };
+    document.addEventListener('pointerlockchange', handleLockChange);
+    return () => document.removeEventListener('pointerlockchange', handleLockChange);
+  }, []);
 
   const handleHost = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -21,7 +31,24 @@ export const UI = () => {
 
   const handleDisconnect = (e: React.MouseEvent) => {
     e.stopPropagation();
+    // Exit pointer lock first if active
+    if (document.pointerLockElement) {
+        document.exitPointerLock();
+    }
     disconnect();
+  };
+
+  const requestLock = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    // Explicitly request lock on the canvas when the overlay is clicked
+    const canvas = document.querySelector('canvas');
+    if (canvas) {
+        // Async request to avoid "user exited lock" errors if spamming
+        // Cast to any to handle environments where types say void but runtime returns Promise
+        (canvas.requestPointerLock() as any)?.catch?.((err: any) => {
+            console.warn("Lock request failed:", err);
+        });
+    }
   };
 
   const copyToClipboard = (e: React.MouseEvent) => {
@@ -32,25 +59,54 @@ export const UI = () => {
   };
 
   const handleInputClick = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent locking when clicking input
+    e.stopPropagation(); 
   };
 
   if (status === GameStatus.PLAYING) {
     const myPlayer = players[myId];
+    const playerCount = Object.keys(players).length;
+
     return (
       <div className="absolute inset-0 pointer-events-none">
-        {/* CROSSHAIR - Must be pointer-events-none to allow clicking through to canvas for PointerLock */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-            <div className="w-1.5 h-1.5 bg-white rounded-full shadow-[0_0_4px_black]"></div>
-        </div>
+        
+        {/* PAUSE OVERLAY - Clickable to capture mouse */}
+        {!isLocked && (
+            <div 
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 pointer-events-auto cursor-pointer"
+                onClick={requestLock}
+            >
+                <div className="bg-[#111] border border-white/20 p-8 rounded-2xl shadow-2xl text-center animate-in fade-in zoom-in duration-300 transform transition hover:scale-105">
+                    <MousePointer2 className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-bounce" />
+                    <h2 className="text-2xl font-black text-white mb-2">CLICK TO PLAY</h2>
+                    <p className="text-gray-400 text-sm mb-6">Capture mouse cursor to move & shoot</p>
+                    <button className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-8 rounded-full transition shadow-lg shadow-blue-900/50">
+                        RESUME
+                    </button>
+                </div>
+            </div>
+        )}
+
+        {/* CROSSHAIR */}
+        {isLocked && (
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                <div className="w-1.5 h-1.5 bg-green-400 rounded-full shadow-[0_0_8px_#4ade80]"></div>
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 border border-white/20 rounded-full"></div>
+            </div>
+        )}
 
         {/* HUD Top Left */}
         <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md p-4 rounded-xl text-white border border-white/10 pointer-events-auto">
           <div className="flex items-center gap-2 mb-2">
             <Radio className="w-4 h-4 text-green-400 animate-pulse" />
             <span className="font-bold text-sm tracking-wider">LIVE SESSION</span>
+            {playerCount === 1 && (
+                <span className="ml-2 flex items-center gap-1 text-[10px] bg-yellow-500/20 text-yellow-200 px-2 py-0.5 rounded-full border border-yellow-500/30">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    WAITING FOR PLAYERS
+                </span>
+            )}
           </div>
-          <div className="text-xs text-gray-400 mb-1">ROOM ID (Share this to invite)</div>
+          <div className="text-xs text-gray-400 mb-1">ROOM ID</div>
           <div className="flex items-center gap-2 bg-white/10 p-2 rounded-lg cursor-pointer hover:bg-white/20 transition" onClick={copyToClipboard}>
             <span className="font-mono text-sm">{myId}</span>
             <Copy className="w-3 h-3 text-gray-400" />
@@ -60,9 +116,9 @@ export const UI = () => {
           <div className="mt-4 border-t border-white/10 pt-2">
              <div className="flex items-center gap-2 text-xs text-gray-400 mb-2">
                <Users className="w-3 h-3" />
-               <span>PLAYERS ({Object.keys(players).length})</span>
+               <span>PLAYERS ({playerCount})</span>
              </div>
-             <ul className="space-y-1">
+             <ul className="space-y-1 max-h-32 overflow-y-auto">
                {Object.values(players).map((p: PlayerState) => (
                  <li key={p.id} className="text-xs flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full" style={{ background: p.color }}></span>
@@ -102,11 +158,12 @@ export const UI = () => {
         </div>
         
         {/* Controls Hint */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-white/50 text-xs font-mono text-center pointer-events-none">
-          <div className="mb-1 text-yellow-400 font-bold animate-pulse">CLICK BACKGROUND TO START</div>
-          <div className="mb-1">WASD Move • SPACE Jump • CLICK Shoot</div>
-          <div>ESC to release mouse</div>
-        </div>
+        {isLocked && (
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-white/50 text-xs font-mono text-center pointer-events-none">
+            <div className="mb-1">WASD Move • SPACE Jump • CLICK Shoot</div>
+            <div>ESC to release mouse</div>
+            </div>
+        )}
       </div>
     );
   }
