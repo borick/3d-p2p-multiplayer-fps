@@ -9,7 +9,6 @@ export const UI = () => {
   const [copySuccess, setCopySuccess] = useState('');
   const [isLocked, setIsLocked] = useState(false);
 
-  // Monitor Pointer Lock State
   useEffect(() => {
     const handleLockChange = () => {
         setIsLocked(!!document.pointerLockElement);
@@ -22,7 +21,7 @@ export const UI = () => {
     e.stopPropagation();
     hostGame();
   };
-  
+
   const handleJoin = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!targetId.trim()) return;
@@ -31,7 +30,6 @@ export const UI = () => {
 
   const handleDisconnect = (e: React.MouseEvent) => {
     e.stopPropagation();
-    // Exit pointer lock first if active
     if (document.pointerLockElement) {
         document.exitPointerLock();
     }
@@ -39,12 +37,12 @@ export const UI = () => {
   };
 
   const requestLock = (e: React.MouseEvent) => {
+    // Only lock if we aren't clicking a button/input
+    if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('.interactive')) return;
+    
     e.stopPropagation();
-    // Explicitly request lock on the canvas when the overlay is clicked
     const canvas = document.querySelector('canvas');
     if (canvas) {
-        // Async request to avoid "user exited lock" errors if spamming
-        // Cast to any to handle environments where types say void but runtime returns Promise
         (canvas.requestPointerLock() as any)?.catch?.((err: any) => {
             console.warn("Lock request failed:", err);
         });
@@ -52,7 +50,7 @@ export const UI = () => {
   };
 
   const copyToClipboard = (e: React.MouseEvent) => {
-    e.stopPropagation();
+    e.stopPropagation(); // Prevent re-locking the mouse
     navigator.clipboard.writeText(myId);
     setCopySuccess('Copied!');
     setTimeout(() => setCopySuccess(''), 2000);
@@ -69,13 +67,13 @@ export const UI = () => {
     return (
       <div className="absolute inset-0 pointer-events-none">
         
-        {/* PAUSE OVERLAY - Clickable to capture mouse */}
+        {/* PAUSE / RESUME OVERLAY */}
         {!isLocked && (
             <div 
                 className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 pointer-events-auto cursor-pointer"
                 onClick={requestLock}
             >
-                <div className="bg-[#111] border border-white/20 p-8 rounded-2xl shadow-2xl text-center animate-in fade-in zoom-in duration-300 transform transition hover:scale-105">
+                <div className="bg-[#0f172a] border border-blue-500/30 p-8 rounded-2xl text-center shadow-[0_0_50px_rgba(59,130,246,0.2)]">
                     <MousePointer2 className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-bounce" />
                     <h2 className="text-2xl font-black text-white mb-2">CLICK TO PLAY</h2>
                     <p className="text-gray-400 text-sm mb-6">Capture mouse cursor to move & shoot</p>
@@ -94,8 +92,8 @@ export const UI = () => {
             </div>
         )}
 
-        {/* HUD Top Left */}
-        <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md p-4 rounded-xl text-white border border-white/10 pointer-events-auto">
+        {/* TOP LEFT HUD - Added z-[60] so it sits ABOVE the pause menu */}
+        <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md p-4 rounded-xl text-white border border-white/10 pointer-events-auto z-[60] interactive">
           <div className="flex items-center gap-2 mb-2">
             <Radio className="w-4 h-4 text-green-400 animate-pulse" />
             <span className="font-bold text-sm tracking-wider">LIVE SESSION</span>
@@ -106,13 +104,21 @@ export const UI = () => {
                 </span>
             )}
           </div>
-          <div className="text-xs text-gray-400 mb-1">ROOM ID</div>
-          <div className="flex items-center gap-2 bg-white/10 p-2 rounded-lg cursor-pointer hover:bg-white/20 transition" onClick={copyToClipboard}>
-            <span className="font-mono text-sm">{myId}</span>
-            <Copy className="w-3 h-3 text-gray-400" />
-          </div>
-          {copySuccess && <div className="text-xs text-green-400 mt-1">{copySuccess}</div>}
           
+          <div className="text-xs text-gray-400 mb-1">ROOM ID</div>
+          
+          {/* Room ID Box - Added select-text */}
+          <div 
+            className="flex items-center gap-2 bg-white/10 p-2 rounded-lg cursor-pointer hover:bg-white/20 transition group" 
+            onClick={copyToClipboard}
+            title="Click to Copy"
+          >
+            <span className="font-mono text-sm select-text text-blue-200">{myId}</span>
+            <Copy className="w-3 h-3 text-gray-400 group-hover:text-white transition" />
+          </div>
+          
+          {copySuccess && <div className="text-xs text-green-400 mt-1">{copySuccess}</div>}
+
           <div className="mt-4 border-t border-white/10 pt-2">
              <div className="flex items-center gap-2 text-xs text-gray-400 mb-2">
                <Users className="w-3 h-3" />
@@ -132,8 +138,8 @@ export const UI = () => {
           </div>
         </div>
 
-        {/* HUD Bottom Left: HEALTH */}
-        <div className="absolute bottom-4 left-4">
+        {/* BOTTOM LEFT HEALTH - Added z-[60] just in case */}
+        <div className="absolute bottom-4 left-4 z-[60]">
              <div className="bg-black/60 backdrop-blur-md p-4 rounded-xl border border-white/10">
                 <div className="text-3xl font-black italic text-white mb-1">
                     {myPlayer?.health ?? 0}<span className="text-sm font-normal text-gray-400 ml-1">HP</span>
@@ -147,8 +153,8 @@ export const UI = () => {
              </div>
         </div>
 
-        {/* HUD Bottom Right */}
-        <div className="absolute bottom-4 right-4 pointer-events-auto">
+        {/* BOTTOM RIGHT DISCONNECT - Added z-[60] */}
+        <div className="absolute bottom-4 right-4 pointer-events-auto z-[60] interactive">
           <button 
             onClick={handleDisconnect}
             className="bg-red-500/20 hover:bg-red-500/40 text-red-200 border border-red-500/50 px-6 py-2 rounded-lg font-bold backdrop-blur-sm transition text-sm"
@@ -156,8 +162,7 @@ export const UI = () => {
             DISCONNECT
           </button>
         </div>
-        
-        {/* Controls Hint */}
+
         {isLocked && (
             <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-white/50 text-xs font-mono text-center pointer-events-none">
             <div className="mb-1">WASD Move • SPACE Jump • CLICK Shoot</div>
@@ -168,13 +173,11 @@ export const UI = () => {
     );
   }
 
-  // LOBBY STATE
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-[#050505] text-white pointer-events-auto">
-      {/* Background Grids */}
+    <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0a]">
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
       
-      <div className="relative z-10 w-full max-w-md p-8 bg-[#111] border border-white/10 rounded-2xl shadow-2xl backdrop-blur-xl">
+      <div className="relative z-10 w-full max-w-md p-8 bg-[#0f172a] border border-white/10 rounded-2xl shadow-2xl">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-black bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent mb-2">
             P2P FPS
@@ -199,9 +202,8 @@ export const UI = () => {
 
         {status === GameStatus.LOBBY && (
           <div className="space-y-6">
-            {/* Host Section */}
             <div className="group relative overflow-hidden bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl p-1 transition hover:scale-[1.02] cursor-pointer" onClick={handleHost}>
-              <div className="bg-[#1a1a1a] rounded-[10px] p-6 h-full flex items-center justify-between group-hover:bg-opacity-90 transition">
+              <div className="bg-[#0f172a] p-4 rounded-lg flex items-center justify-between group-hover:bg-opacity-90 transition">
                 <div>
                    <h3 className="font-bold text-lg text-white">Host Match</h3>
                    <p className="text-xs text-gray-400">Generate a Room ID to share</p>
@@ -215,11 +217,10 @@ export const UI = () => {
                 <div className="w-full border-t border-white/10"></div>
               </div>
               <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-[#111] px-2 text-gray-500">Or Join Friend</span>
+                <span className="bg-[#0f172a] px-2 text-gray-500">Or Join</span>
               </div>
             </div>
 
-            {/* Join Section */}
             <div className="space-y-3">
               <div className="relative">
                 <input 
@@ -232,6 +233,7 @@ export const UI = () => {
                 />
                 <Share2 className="absolute right-3 top-3.5 w-4 h-4 text-gray-500 pointer-events-none" />
               </div>
+
               <button 
                 onClick={handleJoin}
                 disabled={!targetId}
@@ -248,7 +250,6 @@ export const UI = () => {
           </div>
         )}
       </div>
-      
       <div className="absolute bottom-4 text-xs text-gray-600 font-mono pointer-events-none">
         Pointer Lock Required • WebRTC P2P
       </div>
