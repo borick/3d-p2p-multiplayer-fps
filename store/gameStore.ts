@@ -20,9 +20,8 @@ const PEER_CONFIG = {
     }
 };
 
-// ANTI-CHEAT CONSTANTS
-const MAX_SPEED_PER_TICK = 1.5; // Max units a player can move in 30ms (generous buffer)
-const MAX_REACH = 100; // Max shooting distance
+const MAX_SPEED_PER_TICK = 2.0; 
+const MAX_REACH = 100;
 
 interface GameStore {
   status: GameStatus;
@@ -45,22 +44,18 @@ interface GameStore {
   switchWeapon: () => void;
   sendHit: (targetId: string, damage: number) => void;
   
-  // Physics Actions (Called by React Loop)
   updateProjectiles: (newProjs: Projectile[]) => void;
   updateItems: (newItems: Record<string, WorldItem>) => void;
   
   disconnect: () => void;
 }
 
-// Global Variables
 let peer: Peer | null = null;
 let connections: DataConnection[] = [];
 let broadcastInterval: any = null;
 let sequenceNumber = 0;
 
-// HOST-SIDE STATE TRACKING (Not shared with clients)
-const playerCooldowns: Record<string, number> = {}; // Track last fire time
-const lastKnownPositions: Record<string, {x:number, y:number, z:number}> = {}; // Track speed
+const playerCooldowns: Record<string, number> = {};
 
 const INITIAL_ITEMS: Record<string, WorldItem> = {
     'rocket_1': { id: 'rocket_1', type: 'AMMO_ROCKET', position: { x: 5, y: 1, z: 5 } },
@@ -90,7 +85,6 @@ const createInitialPlayer = (id: string, color: string): PlayerState => ({
   ammoRocket: 0
 });
 
-// Helper: 3D Distance
 const getDist = (a: any, b: any) => Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2 + (a.z-b.z)**2);
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -149,167 +143,89 @@ export const useGameStore = create<GameStore>((set, get) => ({
            const [op, payload, extra] = data as [number, any, any];
            const pId = conn.peer;
 
-           // --- 1. MOVEMENT VALIDATION ---
            if (op === OPS.UPDATE) {
              const [x, y, z, yaw, hp, seq, wpn, ammo] = payload;
-             
              set(state => {
                  const prev = state.players[pId];
-                 
-                 // ANTI-CHEAT: SPEED CHECK
-                 // If player existed before, check how far they moved
                  if (prev) {
                     const dist = getDist(prev.position, {x,y,z});
-                    // If they moved unreasonably fast, IGNORE this packet
-                    // This creates a "rubber band" effect for the cheater
-                    if (dist > MAX_SPEED_PER_TICK) {
-                        return state; 
-                    }
+                    if (dist > MAX_SPEED_PER_TICK) return state; 
                  }
-
                  return {
                      players: {
                          ...state.players,
                          [pId]: {
-                             ...state.players[pId], // Keep existing data if undefined
-                             id: pId,
-                             position: {x,y,z}, 
-                             yaw,
-                             // HOST AUTHORITY: We Ignore Client's health and ammo claims!
-                             // We only accept their Weapon Swap request
+                             ...state.players[pId],
+                             id: pId, position: {x,y,z}, yaw,
                              currentWeapon: wpn, 
                              lastSequence: seq,
-                             // Preserve Host-side values
                              health: prev?.health ?? MAX_HEALTH,
                              ammoRocket: prev?.ammoRocket ?? 0,
-                             color: prev?.color ?? getRandomColor() // Fallback
+                             color: prev?.color ?? getRandomColor()
                          }
                      }
                  };
              });
            } 
-
-           // --- 2. SHOOTING VALIDATION (HITSCAN) ---
            else if (op === OPS.HIT) {
-              // Payload = targetId, Extra = damage
-              // The Client SAYS they hit someone. The Host verifies.
               const targetId = payload as string;
-              
               set(state => {
                   const shooter = state.players[pId];
                   const target = state.players[targetId];
-
                   if (!shooter || !target) return state;
-                  if (shooter.health <= 0) return state; // Dead men tell no tales
-
-                  // ANTI-CHEAT: RATE LIMIT
+                  
                   const now = Date.now();
                   const lastFired = playerCooldowns[pId] || 0;
-                  if (now - lastFired < WEAPONS.PISTOL.cooldown) {
-                      return state; // Ignored: Rapid fire hack
-                  }
+                  if (now - lastFired < WEAPONS.PISTOL.cooldown) return state;
                   playerCooldowns[pId] = now;
 
-                  // ANTI-CHEAT: ANGLE CHECK (Dot Product)
-                  // Vector from Shooter to Target
-                  const dx = target.position.x - shooter.position.x;
-                  const dz = target.position.z - shooter.position.z;
-                  const dist = Math.sqrt(dx*dx + dz*dz);
-                  
-                  if (dist > MAX_REACH) return state; // Ignored: Shooting across map
+                  if (getDist(shooter.position, target.position) > MAX_REACH) return state;
 
-                  // Normalize direction to target
-                  const dirX = dx / dist;
-                  const dirZ = dz / dist;
-
-                  // Calculate Shooter's Forward Vector based on Yaw
-                  // (ThreeJS yaw is inverted/rotated slightly, depends on implementation, usually Math.sin(yaw))
-                  // This is a simplified check. If dot product > 0.5 (approx 60 degree cone), we allow it.
-                  // For perfect accuracy, we need strict math, but P2P lag makes strict math frustrating.
-                  const shotX = -Math.sin(shooter.yaw);
-                  const shotZ = -Math.cos(shooter.yaw);
-                  
-                  const dot = (dirX * shotX) + (dirZ * shotZ);
-
-                  if (dot < 0.5) {
-                      // Ignored: Player wasn't looking at target (Aimbot/Magic Bullet)
-                      return state;
-                  }
-
-                  // Valid Hit -> Apply Damage
                   let newHealth = target.health - WEAPONS.PISTOL.damage;
-                  
-                  // Respawn Logic
                   if (newHealth <= 0) {
                      newHealth = MAX_HEALTH;
-                     // Random respawn logic handled by Host
                      const randomPos = { x: (Math.random() * 20) - 10, y: 5, z: (Math.random() * 20) - 10 };
                      return {
                         players: { ...state.players, [targetId]: { ...target, health: newHealth, position: randomPos, ammoRocket: 0 } }
                      };
                   }
-
-                  return {
-                     players: { ...state.players, [targetId]: { ...target, health: newHealth } }
-                  };
+                  return { players: { ...state.players, [targetId]: { ...target, health: newHealth } } };
               });
            }
-
-           // --- 3. PROJECTILE VALIDATION ---
            else if (op === OPS.ROCKET_SPAWN) {
               const [origin, velocity] = payload;
-              
               set(state => {
                   const shooter = state.players[pId];
-                  if (!shooter || shooter.ammoRocket <= 0) return state; // Ignored: No ammo
-
-                  // Deduct Ammo (Host Authority)
-                  const updatedShooter = { ...shooter, ammoRocket: shooter.ammoRocket - 1 };
-
-                  // Add Projectile
+                  if (!shooter || shooter.ammoRocket <= 0) return state;
+                  
                   return {
-                      players: { ...state.players, [pId]: updatedShooter },
+                      players: { ...state.players, [pId]: { ...shooter, ammoRocket: shooter.ammoRocket - 1 } },
                       projectiles: [...state.projectiles, {
-                          id: generateId(),
-                          ownerId: pId,
-                          position: origin,
-                          velocity: velocity,
-                          createdAt: Date.now()
+                          id: generateId(), ownerId: pId, position: origin, velocity: velocity, createdAt: Date.now()
                       }]
                   };
               });
-              
-              // Broadcast
               const msg: PeerMessage = [OPS.ROCKET_SPAWN, payload, pId]; 
               connections.forEach(c => { if(c !== conn && c.open) c.send(msg) });
            }
-
-           // --- 4. ITEM PICKUP VALIDATION ---
            else if (op === OPS.ITEM_PICKUP) {
                const itemId = payload;
                set(state => {
                    const item = state.items[itemId];
                    const player = state.players[pId];
                    
+                   // Host Validation
                    if (!item || item.respawnTime || !player) return state;
+                   if (getDist(player.position, item.position) > 3.0) return state; 
 
-                   // ANTI-CHEAT: DISTANCE CHECK
-                   const d = getDist(player.position, item.position);
-                   if (d > 3.0) return state; // Ignored: Teleport/Vacuum hack
-
-                   // Apply Pickup (Host Authority)
                    let newAmmo = player.ammoRocket;
                    let newHealth = player.health;
-                   
                    if (item.type === 'AMMO_ROCKET') newAmmo += 3;
                    if (item.type === 'HEALTH') newHealth = Math.min(100, newHealth + 25);
 
                    return {
                        players: { ...state.players, [pId]: { ...player, ammoRocket: newAmmo, health: newHealth } },
-                       items: {
-                           ...state.items,
-                           [itemId]: { ...item, respawnTime: Date.now() + 10000 }
-                       }
+                       items: { ...state.items, [itemId]: { ...item, respawnTime: Date.now() + 10000 } }
                    };
                });
            }
@@ -331,7 +247,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
-  // CLIENT LOGIC (Trusted Locally, Verified Remotely)
   joinGame: async (targetHostId) => {
     set({ status: GameStatus.CONNECTING, error: null });
     if (peer) peer.destroy();
@@ -371,14 +286,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
                        Object.entries(payload as Record<string,any>).forEach(([pid, d]) => {
                            const [x,y,z,yaw,hp,seq,wpn,ammo,col] = d;
                            if (pid === state.myId) {
-                               // RECONCILIATION:
-                               // If server says we have 50HP but we think we have 100HP, Server wins.
-                               // If server says we have 0 ammo, Server wins.
                                if(nextPlayers[pid]) {
                                    nextPlayers[pid].health = hp; 
                                    nextPlayers[pid].ammoRocket = ammo;
-                                   // Note: We do NOT overwrite position here to prevent jitter
-                                   // unless distance is extreme (teleport/respawn)
                                }
                            } else {
                                nextPlayers[pid] = {
@@ -388,6 +298,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
                                };
                            }
                        });
+                       
+                       // IMPORTANT: Only update Items from server if they have CHANGED status (e.g. respawned)
+                       // Otherwise we trust our local optimistic hiding to avoid flickering
                        return { players: nextPlayers };
                    });
                }
@@ -420,22 +333,27 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
-  // Actions (Client Logic)
   fireWeapon: (origin, direction) => {
-      const { players, myId, isHost } = get();
+      const { players, myId } = get();
       const me = players[myId];
       if (!me) return;
 
       if (me.currentWeapon === WEAPONS.ROCKET.id) {
-          // Optimistic local update
           if (me.ammoRocket > 0) {
-             // ... logic ...
-              const velocity = { x: direction.x * 0.5, y: direction.y * 0.5, z: direction.z * 0.5 };
+              set(s => ({ players: { ...s.players, [myId]: { ...me, ammoRocket: me.ammoRocket - 1 } } }));
+              
+              const velocity = { 
+                  x: direction.x * 0.5, 
+                  y: direction.y * 0.5, 
+                  z: direction.z * 0.5 
+              };
+              
               set(s => ({
                   projectiles: [...s.projectiles, {
                       id: generateId(), ownerId: myId, position: origin, velocity, createdAt: Date.now()
                   }]
               }));
+
               const msg: PeerMessage = [OPS.ROCKET_SPAWN, [origin, velocity], myId];
               connections.forEach(c => c.open && c.send(msg));
           }
@@ -445,26 +363,66 @@ export const useGameStore = create<GameStore>((set, get) => ({
   sendHit: (targetId, damage) => {
       const { isHost } = get();
       if (isHost) {
-          // Host logic calls "HIT" internally via same validation logic if needed
-          // But usually we just update state directly for Host to avoid network overhead
-          // ... (simplified)
+          // Host applies damage locally in next logic pass, or we can trigger immediate state update here
+          // For consistency with GameManager loop, we usually let physics detect collision, 
+          // but for hitscan, we apply immediately:
+          set(state => {
+              const p = state.players[targetId];
+              if(!p) return state;
+              let newHealth = p.health - damage;
+              if (newHealth <= 0) {
+                 newHealth = MAX_HEALTH;
+                 const randomPos = { x: (Math.random() * 20) - 10, y: 5, z: (Math.random() * 20) - 10 };
+                 return { players: { ...state.players, [targetId]: { ...p, health: newHealth, position: randomPos, ammoRocket: 0 } } };
+              }
+              return { players: { ...state.players, [targetId]: { ...p, health: newHealth } } };
+          });
       } else {
           const msg: PeerMessage = [OPS.HIT, targetId, damage];
           connections.forEach(c => c.open && c.send(msg));
       }
   },
 
+  // --- FIXED TRYPICKUP ---
   tryPickup: (itemId) => {
-      // Optimistic check
       const { items, myId, players } = get();
       const item = items[itemId];
-      if (item && !item.respawnTime) {
+      const me = players[myId];
+      
+      // Basic validation
+      if (!item || item.respawnTime || !me) return;
+
+      // Local Distance Check (Prevents spamming server if too far)
+      const dist = getDist(me.position, item.position);
+      
+      // 2.0 Radius allows picking up slightly before visually touching
+      if (dist < 2.0) {
+          
+          // A. OPTIMISTIC UPDATE (Hide Locally Immediately)
+          // This makes the item disappear instantly for you, stopping the loop.
+          set(s => {
+              const nextItems = {
+                  ...s.items,
+                  [itemId]: { ...item, respawnTime: Date.now() + 10000 }
+              };
+              
+              // B. OPTIMISTIC STATS (Give Ammo/Health Immediately)
+              const nextPlayer = { ...s.players[myId] };
+              if (item.type === 'AMMO_ROCKET') nextPlayer.ammoRocket += 3;
+              if (item.type === 'HEALTH') nextPlayer.health = Math.min(100, nextPlayer.health + 25);
+              
+              return { 
+                  items: nextItems,
+                  players: { ...s.players, [myId]: nextPlayer }
+              };
+          });
+          
+          // C. SEND NETWORK PACKET
           const msg: PeerMessage = [OPS.ITEM_PICKUP, itemId];
           connections.forEach(c => c.open && c.send(msg));
       }
   },
 
-  // ... rest of actions
   switchWeapon: () => {
       set(s => {
           const me = s.players[s.myId];
