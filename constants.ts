@@ -4,23 +4,38 @@ export const PLAYER_COLORS = [
 
 export const WORLD_SIZE = 100;
 export const PLAYER_RADIUS = 0.8;
-export const BROADCAST_RATE_MS = 30;
+export const BROADCAST_RATE_MS = 30; // Network Tick Rate
 export const MAX_HEALTH = 100;
 
 // WEAPON CONFIG
 export const WEAPONS = {
-  PISTOL: { id: 0, name: 'Pistol', damage: 15, speed: 0, cooldown: 400, type: 'HITSCAN' },
-  ROCKET: { id: 1, name: 'RPG', damage: 80, speed: 20, cooldown: 1500, type: 'PROJECTILE', radius: 6 }
+  PISTOL: { 
+    id: 0, 
+    name: 'Pistol', 
+    damage: 15, 
+    speed: 0, // Hitscan
+    cooldown: 400, 
+    type: 'HITSCAN' 
+  },
+  ROCKET: { 
+    id: 1, 
+    name: 'RPG', 
+    damage: 80, 
+    speed: 20, 
+    cooldown: 1500, 
+    type: 'PROJECTILE', 
+    radius: 6 
+  }
 };
 
-export const EXPLOSION_TIME = 500; // ms to show explosion visual
+export const EXPLOSION_TIME = 500; 
 
-// NETWORK OPS
+// NETWORK OPS (Binary Headers)
 export const OPS = {
-  UPDATE: 0,
-  HIT: 1,
-  ROCKET_SPAWN: 2, // New: Tell others a rocket was fired
-  ITEM_PICKUP: 3   // New: Tell Host I picked up an item
+  UPDATE: 0,       // Sync Position/HP
+  HIT: 1,          // Report Hit
+  ROCKET_SPAWN: 2, // Spawn Projectile
+  ITEM_PICKUP: 3   // Claim Item
 };
 
 export const generateId = () => Math.random().toString(36).substr(2, 9);
