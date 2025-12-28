@@ -8,9 +8,7 @@ import {
   BROADCAST_RATE_MS, 
   MAX_HEALTH, 
   BULLET_DAMAGE,
-  // We assume these are added to constants.ts as discussed:
-  // export const OPS = { UPDATE: 0, HIT: 1 };
-  OPS 
+  OPS // Ensure this is exported in constants.ts
 } from '../constants';
 
 interface GameStore {
@@ -29,14 +27,12 @@ interface GameStore {
   disconnect: () => void;
 }
 
-// Internal singleton variables (not part of React state)
 let peer: Peer | null = null;
 let connections: DataConnection[] = [];
 let broadcastInterval: any = null;
-let sequenceNumber = 0; // Increments every tick to track packet freshness
+let sequenceNumber = 0;
 
-// --- HELPER: Serialization (Compression) ---
-// Converts a Player Object into a tiny array: [x, y, z, yaw, health, sequence]
+// Helper: Pack player data into array to save bandwidth
 const packPlayer = (p: PlayerState, seq: number): number[] => [
   Number(p.position.x.toFixed(2)),
   Number(p.position.y.toFixed(2)),
@@ -52,7 +48,7 @@ const createInitialPlayer = (id: string, color: string): PlayerState => ({
   yaw: 0,
   color,
   health: MAX_HEALTH,
-  lastSequence: 0 
+  lastSequence: 0
 });
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -84,28 +80,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
           players: { [id]: initialPlayer }
         });
 
-        // --- HOST BROADCAST LOOP ---
+        // HOST LOOP
         if (broadcastInterval) clearInterval(broadcastInterval);
         broadcastInterval = setInterval(() => {
           sequenceNumber++;
           const state = get().players;
-          
-          // Pack the entire world state into a dictionary of arrays
           const packedState: Record<string, any> = {};
           
           Object.values(state).forEach(p => {
-             // Host acts as the authority on Sequence for the world state
              packedState[p.id] = packPlayer(p, sequenceNumber);
-             // We append color to the end for new players (Position 6)
              packedState[p.id].push(p.color); 
           });
 
-          // Network Message: [OP_CODE, PAYLOAD]
           const msg: PeerMessage = [OPS.UPDATE, packedState];
-          
-          connections.forEach(conn => { 
-            if (conn.open) conn.send(msg); 
-          });
+          connections.forEach(conn => { if (conn.open) conn.send(msg); });
         }, BROADCAST_RATE_MS);
 
         resolve(id);
@@ -115,23 +103,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
         connections.push(conn);
         
         conn.on('data', (data: any) => {
-           // Expecting: [OP, PAYLOAD, EXTRA]
            const [op, payload, extra] = data as [number, any, any];
 
            if (op === OPS.UPDATE) {
-             // CLIENT -> HOST Update
-             // Payload is [x, y, z, yaw, health, seq, color]
              const pId = conn.peer;
              const [x, y, z, yaw, hp, seq, col] = payload;
 
              set(state => {
                const existing = state.players[pId];
-               
-               // NETWORKING FIX: Packet Discard
-               // If we received a packet with seq 50, but we already processed 51, ignore 50.
-               if (existing && existing.lastSequence && seq < existing.lastSequence) {
-                 return state;
-               }
+               if (existing && existing.lastSequence && seq < existing.lastSequence) return state;
 
                return {
                  players: { 
@@ -140,37 +120,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
                      id: pId,
                      position: { x, y, z },
                      yaw,
-                     health: state.players[pId]?.health ?? MAX_HEALTH, // Host ignores client health claims
+                     health: state.players[pId]?.health ?? MAX_HEALTH,
                      color: existing ? existing.color : col,
                      lastSequence: seq
                    }
                  }
                };
              });
-           } 
-           else if (op === OPS.HIT) {
-             // CLIENT -> HOST Hit Notification
+           } else if (op === OPS.HIT) {
              const targetId = payload as string;
              const shooterId = extra as string;
              
              set(state => {
                const target = state.players[targetId];
                const shooter = state.players[shooterId];
-               
-               // SECURITY FIX: Basic Validation
-               if (!target || !shooter) return state; 
-               if (shooter.health <= 0) return state; // Dead players can't shoot
+               if (!target || !shooter) return state;
+               if (shooter.health <= 0) return state;
 
-               // Host calculates damage
                let newHealth = target.health - BULLET_DAMAGE;
                let newPos = target.position;
-
-               // Respawn Logic
                if (newHealth <= 0) {
                  newHealth = MAX_HEALTH;
                  newPos = { x: (Math.random() * 20) - 10, y: 5, z: (Math.random() * 20) - 10 };
                }
-
                return {
                  players: {
                    ...state.players,
@@ -183,12 +155,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
         conn.on('close', () => {
            connections = connections.filter(c => c !== conn);
-           // Remove player immediately on disconnect
            set(state => {
              const { [conn.peer]: _, ...rest } = state.players;
              return { players: rest };
            });
         });
+      });
+      
+      // Error handling for Host
+      peer!.on('error', (err) => {
+          console.error("Peer Error", err);
+          set({ status: GameStatus.ERROR, error: "Host Error: " + err.message });
       });
     });
   },
@@ -204,9 +181,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       peer!.on('open', (id) => {
         set({ myId: id, isHost: false, hostId: targetHostId });
         
-        // NETWORKING FIX: Removed { reliable: true }
-        // We want UDP-like behavior (fire and forget) for movement to prevent lag spikes.
-        const conn = peer!.connect(targetHostId);
+        // FIX IS HERE: Added { reliable: true }
+        // This forces a TCP-like connection which punches through firewalls much better than UDP.
+        const conn = peer!.connect(targetHostId, { reliable: true });
         connections = [conn];
 
         conn.on('open', () => {
@@ -216,14 +193,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
              players: { [id]: initialPlayer }
            });
 
-           // --- CLIENT BROADCAST LOOP ---
            if (broadcastInterval) clearInterval(broadcastInterval);
            broadcastInterval = setInterval(() => {
              sequenceNumber++;
              const myState = get().players[id];
-             
              if (myState && conn.open) {
-               // Send packed data: [x, y, z, yaw, hp, seq, color]
                const packed = [...packPlayer(myState, sequenceNumber), myState.color];
                conn.send([OPS.UPDATE, packed]);
              }
@@ -238,22 +212,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
           if (op === OPS.UPDATE) {
             set(state => {
               const nextPlayers = { ...state.players };
-              
-              // Payload is a dict: { "playerA": [x,y,z...], "playerB": [x,y,z...] }
               Object.entries(payload).forEach(([pId, data]) => {
                 const [x, y, z, yaw, hp, seq, col] = data;
 
                 if (pId === state.myId) {
-                  // If this is ME, only accept Health updates from server
-                  // (We trust our own local position more than the server's echo)
-                  if (nextPlayers[pId]) {
-                    nextPlayers[pId].health = hp;
-                  }
+                  if (nextPlayers[pId]) nextPlayers[pId].health = hp;
                 } else {
-                  // If this is an ENEMY, update fully
                   const existing = nextPlayers[pId];
-                  
-                  // Discard old packets
                   if (existing && existing.lastSequence && seq < existing.lastSequence) return;
 
                   nextPlayers[pId] = {
@@ -266,7 +231,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
                   };
                 }
               });
-
               return { players: nextPlayers };
             });
           }
@@ -276,18 +240,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
           set({ status: GameStatus.ERROR, error: "Disconnected from host" });
         });
         
-        // Timeout check
         setTimeout(() => {
             if (!conn.open) {
-                set({ status: GameStatus.ERROR, error: "Connection timeout." });
+                set({ status: GameStatus.ERROR, error: "Connection timed out. Host might be offline." });
                 reject();
             }
         }, 5000);
       });
 
       peer!.on('error', (err) => {
-         console.error(err);
-         set({ error: "Connection error.", status: GameStatus.ERROR });
+         console.error("Peer Error", err);
+         set({ error: "Could not connect: " + err.type, status: GameStatus.ERROR });
          reject(err);
       });
     });
@@ -299,20 +262,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set(state => ({
       players: {
         ...state.players,
-        [myId]: {
-          ...state.players[myId],
-          position: pos,
-          yaw: yaw
-        }
+        [myId]: { ...state.players[myId], position: pos, yaw: yaw }
       }
     }));
   },
 
   sendHit: (targetId: string) => {
     const { isHost, players, myId } = get();
-    
     if (isHost) {
-      // Host Logic: Apply damage immediately
       set(state => {
          const target = state.players[targetId];
          if (!target) return state;
@@ -330,7 +287,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
          };
       });
     } else {
-      // Client Logic: Send HIT Request -> [OP, Target, Shooter]
       const msg: PeerMessage = [OPS.HIT, targetId, myId];
       connections.forEach(conn => { if (conn.open) conn.send(msg); });
     }
