@@ -3,7 +3,7 @@ import { useSphere } from '@react-three/cannon';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Vector3, Raycaster, Euler } from 'three';
 import { useGameStore } from '../store/gameStore';
-import { PLAYER_RADIUS } from '../constants';
+import { PLAYER_RADIUS, MAX_HEALTH } from '../constants';
 
 const SPEED = 10;
 const JUMP_FORCE = 7;
@@ -16,7 +16,7 @@ export const LocalPlayer = () => {
   const [ref, api] = useSphere(() => ({ 
     mass: 1, 
     type: 'Dynamic',
-    position: [0, 8, 0], // Spawn higher to avoid floor clipping
+    position: [0, 8, 0], // Start high to fall in
     args: [PLAYER_RADIUS],
     fixedRotation: true,
     material: { friction: 0, restitution: 0 }
@@ -24,30 +24,35 @@ export const LocalPlayer = () => {
 
   const velocity = useRef([0, 0, 0]);
   const position = useRef([0, 0, 0]);
-  
-  // Sync physics state
+
+  // Sync physics body state to local refs
   useEffect(() => api.velocity.subscribe((v) => (velocity.current = v)), [api.velocity]);
   useEffect(() => api.position.subscribe((p) => {
     position.current = p;
   }), [api.position]);
 
-  // Handle Respawn/Teleport from Server
+  // --- NETWORK SYNC LOGIC ---
   useEffect(() => {
     const myState = players[myId];
     if (myState) {
         const currentVec = new Vector3(position.current[0], position.current[1], position.current[2]);
         const serverVec = new Vector3(myState.position.x, myState.position.y, myState.position.z);
         const dist = currentVec.distanceTo(serverVec);
-        
-        if (dist > 8) {
+
+        // FIX: Improved Teleport/Respawn Logic
+        // The previous code snapped back if dist > 8. This caused "rubber banding"
+        // because the server is always slightly behind the client in time.
+        // Now, we only force a teleport if:
+        // 1. We are far away (> 10 units) AND
+        // 2. We have full health (implies a respawn happened)
+        if (myState.health === MAX_HEALTH && dist > 10) {
             api.position.set(myState.position.x, myState.position.y, myState.position.z);
             api.velocity.set(0, 0, 0);
         }
     }
   }, [players[myId]?.position, players[myId]?.health, api.position, api.velocity, myId]);
 
-
-  // Input Handling
+  // --- INPUT HANDLING ---
   const keys = useRef<{ [key: string]: boolean }>({});
   const clickRequest = useRef(false);
   const isLocked = useRef(false);
@@ -62,21 +67,15 @@ export const LocalPlayer = () => {
             clickRequest.current = true;
         }
     };
-    
+
     const handleMouseMove = (e: MouseEvent) => {
         if (document.pointerLockElement === gl.domElement) {
-            // Update camera rotation manually
-            // Sensitivity
             const sensitivity = 0.002;
-            
             cameraEuler.current.setFromQuaternion(camera.quaternion);
-            
             cameraEuler.current.y -= e.movementX * sensitivity;
             cameraEuler.current.x -= e.movementY * sensitivity;
-            
-            // Clamp pitch (up/down) to avoid flipping
+            // Clamp looking up/down
             cameraEuler.current.x = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, cameraEuler.current.x));
-            
             camera.quaternion.setFromEuler(cameraEuler.current);
         }
     };
@@ -90,8 +89,6 @@ export const LocalPlayer = () => {
     window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('pointerlockchange', handleLockChange);
-    
-    // Initial check
     handleLockChange();
 
     return () => {
@@ -105,10 +102,11 @@ export const LocalPlayer = () => {
 
   const raycaster = useRef(new Raycaster());
 
+  // --- GAME LOOP ---
   useFrame(() => {
     if (!ref.current) return;
 
-    // --- Movement ---
+    // 1. Movement Logic
     const { KeyW, KeyS, KeyA, KeyD, Space } = keys.current;
     
     const forward = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -120,7 +118,7 @@ export const LocalPlayer = () => {
     right.normalize();
 
     const direction = new Vector3();
-    
+
     if (isLocked.current) {
         if (KeyW) direction.add(forward);
         if (KeyS) direction.sub(forward);
@@ -129,31 +127,28 @@ export const LocalPlayer = () => {
     }
 
     direction.normalize().multiplyScalar(SPEED);
-
-    // Apply velocity
     api.velocity.set(direction.x, velocity.current[1], direction.z);
 
-    // Jump
     if (Space && isLocked.current && Math.abs(velocity.current[1]) < 0.1) {
       api.velocity.set(velocity.current[0], JUMP_FORCE, velocity.current[2]);
     }
 
-    // --- Camera Position Sync ---
+    // 2. Camera Follow
     camera.position.set(position.current[0], position.current[1] + 0.6, position.current[2]);
 
-    // --- Shooting ---
+    // 3. Shooting Logic (Hit Scan)
     if (clickRequest.current) {
         clickRequest.current = false;
-        
-        // Raycast from center of screen
         raycaster.current.setFromCamera({ x: 0, y: 0 }, camera);
         
+        // Raycast against everything in the scene
         const intersects = raycaster.current.intersectObjects(scene.children, true);
         
         for (let hit of intersects) {
             let obj = hit.object;
             let foundTarget = false;
             
+            // Traverse up to find the group with UserData (where we store ID)
             for (let i = 0; i < 5; i++) {
                 if (obj.userData && obj.userData.id) {
                     if (obj.userData.id !== myId) {
@@ -165,15 +160,17 @@ export const LocalPlayer = () => {
                 if (!obj.parent) break;
                 obj = obj.parent as any;
             }
-            
             if (foundTarget) break; 
         }
     }
 
-    // --- Update Network State ---
+    // 4. Network Update
+    // Calculate Yaw for network transmission
     const lookAtVector = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     const yaw = Math.atan2(-lookAtVector.x, -lookAtVector.z);
-
+    
+    // We send our current LOCAL physics state to the store/network.
+    // We do NOT wait for the server to tell us where we are (Client Prediction).
     updateMyState({ x: position.current[0], y: position.current[1], z: position.current[2] }, yaw);
   });
 
