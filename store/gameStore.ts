@@ -8,7 +8,7 @@ import {
   BROADCAST_RATE_MS, 
   MAX_HEALTH, 
   BULLET_DAMAGE,
-  OPS // Ensure this is exported in constants.ts
+  OPS 
 } from '../constants';
 
 interface GameStore {
@@ -27,12 +27,22 @@ interface GameStore {
   disconnect: () => void;
 }
 
+// --- FIX: GOOGLE STUN SERVERS ---
+// This tells the browser how to punch through routers/firewalls.
+const PEER_CONFIG = {
+    config: {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' }
+        ]
+    }
+};
+
 let peer: Peer | null = null;
 let connections: DataConnection[] = [];
 let broadcastInterval: any = null;
 let sequenceNumber = 0;
 
-// Helper: Pack player data into array to save bandwidth
 const packPlayer = (p: PlayerState, seq: number): number[] => [
   Number(p.position.x.toFixed(2)),
   Number(p.position.y.toFixed(2)),
@@ -67,7 +77,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (peer) peer.destroy();
     
     const newId = generateId();
-    peer = new Peer(newId);
+    // APPLY CONFIG HERE
+    peer = new Peer(newId, PEER_CONFIG);
 
     return new Promise((resolve) => {
       peer!.on('open', (id) => {
@@ -80,7 +91,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
           players: { [id]: initialPlayer }
         });
 
-        // HOST LOOP
         if (broadcastInterval) clearInterval(broadcastInterval);
         broadcastInterval = setInterval(() => {
           sequenceNumber++;
@@ -103,6 +113,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
         connections.push(conn);
         
         conn.on('data', (data: any) => {
+           // Basic error handling for malformed packets
+           if (!Array.isArray(data)) return;
+
            const [op, payload, extra] = data as [number, any, any];
 
            if (op === OPS.UPDATE) {
@@ -162,10 +175,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
         });
       });
       
-      // Error handling for Host
       peer!.on('error', (err) => {
-          console.error("Peer Error", err);
-          set({ status: GameStatus.ERROR, error: "Host Error: " + err.message });
+        console.error("Peer Error", err);
+        // Don't crash lobby on minor network blips
+        if (err.type === 'peer-unavailable') {
+            // ignore
+        } else {
+            set({ status: GameStatus.ERROR, error: "Host Error: " + err.type });
+        }
       });
     });
   },
@@ -175,14 +192,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (peer) peer.destroy();
     
     const newId = generateId();
-    peer = new Peer(newId);
+    // APPLY CONFIG HERE
+    peer = new Peer(newId, PEER_CONFIG);
 
     return new Promise<void>((resolve, reject) => {
       peer!.on('open', (id) => {
         set({ myId: id, isHost: false, hostId: targetHostId });
         
-        // FIX IS HERE: Added { reliable: true }
-        // This forces a TCP-like connection which punches through firewalls much better than UDP.
+        // Use Reliable (TCP) to ensure the initial handshake works
         const conn = peer!.connect(targetHostId, { reliable: true });
         connections = [conn];
 
@@ -207,6 +224,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         });
 
         conn.on('data', (data: any) => {
+          if (!Array.isArray(data)) return;
           const [op, payload] = data as [number, Record<string, any>];
           
           if (op === OPS.UPDATE) {
@@ -242,10 +260,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
         
         setTimeout(() => {
             if (!conn.open) {
-                set({ status: GameStatus.ERROR, error: "Connection timed out. Host might be offline." });
+                set({ status: GameStatus.ERROR, error: "Connection timeout. Host not found or blocked." });
                 reject();
             }
-        }, 5000);
+        }, 8000); // Increased timeout to 8s
       });
 
       peer!.on('error', (err) => {

@@ -4,15 +4,15 @@ export const PLAYER_COLORS = [
 
 export const WORLD_SIZE = 100;
 export const PLAYER_RADIUS = 0.8;
-export const BROADCAST_RATE_MS = 30; // ~33 ticks per second
+export const BROADCAST_RATE_MS = 30;
 export const MAX_HEALTH = 100;
 export const BULLET_DAMAGE = 25;
 
-// Optimization: Use Numbers instead of Strings for network messages
+// === NETWORK OPERATION CODES ===
+// If you don't have this, the game will fail silently!
 export const OPS = {
   UPDATE: 0,
-  HIT: 1,
-  JOIN: 2
+  HIT: 1
 };
 
 export const generateId = () => Math.random().toString(36).substr(2, 9);
