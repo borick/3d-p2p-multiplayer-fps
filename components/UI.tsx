@@ -37,8 +37,11 @@ export const UI = () => {
   };
 
   const requestLock = (e: React.MouseEvent) => {
-    // Only lock if we aren't clicking a button/input
-    if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('.interactive')) return;
+    // If we are clicking a button or an input, do NOT lock the screen.
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('input') || target.closest('.interactive')) {
+        return;
+    }
     
     e.stopPropagation();
     const canvas = document.querySelector('canvas');
@@ -50,7 +53,7 @@ export const UI = () => {
   };
 
   const copyToClipboard = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent re-locking the mouse
+    e.stopPropagation();
     navigator.clipboard.writeText(myId);
     setCopySuccess('Copied!');
     setTimeout(() => setCopySuccess(''), 2000);
@@ -60,6 +63,7 @@ export const UI = () => {
     e.stopPropagation(); 
   };
 
+  // --- IN GAME VIEW ---
   if (status === GameStatus.PLAYING) {
     const myPlayer = players[myId];
     const playerCount = Object.keys(players).length;
@@ -67,7 +71,7 @@ export const UI = () => {
     return (
       <div className="absolute inset-0 pointer-events-none">
         
-        {/* PAUSE / RESUME OVERLAY */}
+        {/* PAUSE OVERLAY (Click to Resume) */}
         {!isLocked && (
             <div 
                 className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 pointer-events-auto cursor-pointer"
@@ -92,7 +96,8 @@ export const UI = () => {
             </div>
         )}
 
-        {/* TOP LEFT HUD - Added z-[60] so it sits ABOVE the pause menu */}
+        {/* TOP LEFT HUD (Room ID & Players) */}
+        {/* Added 'interactive' class and z-[60] to stay above pause menu */}
         <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md p-4 rounded-xl text-white border border-white/10 pointer-events-auto z-[60] interactive">
           <div className="flex items-center gap-2 mb-2">
             <Radio className="w-4 h-4 text-green-400 animate-pulse" />
@@ -107,12 +112,12 @@ export const UI = () => {
           
           <div className="text-xs text-gray-400 mb-1">ROOM ID</div>
           
-          {/* Room ID Box - Added select-text */}
           <div 
             className="flex items-center gap-2 bg-white/10 p-2 rounded-lg cursor-pointer hover:bg-white/20 transition group" 
             onClick={copyToClipboard}
             title="Click to Copy"
           >
+            {/* select-text allows you to highlight it if the button fails */}
             <span className="font-mono text-sm select-text text-blue-200">{myId}</span>
             <Copy className="w-3 h-3 text-gray-400 group-hover:text-white transition" />
           </div>
@@ -138,8 +143,8 @@ export const UI = () => {
           </div>
         </div>
 
-        {/* BOTTOM LEFT HEALTH - Added z-[60] just in case */}
-        <div className="absolute bottom-4 left-4 z-[60]">
+        {/* BOTTOM LEFT HEALTH */}
+        <div className="absolute bottom-4 left-4 z-[60] pointer-events-none">
              <div className="bg-black/60 backdrop-blur-md p-4 rounded-xl border border-white/10">
                 <div className="text-3xl font-black italic text-white mb-1">
                     {myPlayer?.health ?? 0}<span className="text-sm font-normal text-gray-400 ml-1">HP</span>
@@ -153,7 +158,7 @@ export const UI = () => {
              </div>
         </div>
 
-        {/* BOTTOM RIGHT DISCONNECT - Added z-[60] */}
+        {/* BOTTOM RIGHT DISCONNECT */}
         <div className="absolute bottom-4 right-4 pointer-events-auto z-[60] interactive">
           <button 
             onClick={handleDisconnect}
@@ -173,8 +178,10 @@ export const UI = () => {
     );
   }
 
+  // --- LOBBY VIEW ---
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0a]">
+    // FIX: Added 'pointer-events-auto' here so lobby buttons are clickable
+    <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0a] pointer-events-auto">
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
       
       <div className="relative z-10 w-full max-w-md p-8 bg-[#0f172a] border border-white/10 rounded-2xl shadow-2xl">
