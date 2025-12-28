@@ -10,7 +10,25 @@ export interface PlayerState {
   yaw: number;
   color: string;
   health: number;
-  lastSequence?: number; // To track packet ordering
+  lastSequence?: number;
+  // NEW: Weapon State
+  currentWeapon: number; // 0 = Pistol, 1 = Rocket
+  ammoRocket: number;
+}
+
+export interface Projectile {
+  id: string;
+  ownerId: string;
+  position: Position;
+  velocity: Position; // Direction * Speed
+  createdAt: number;
+}
+
+export interface WorldItem {
+  id: string;
+  type: 'AMMO_ROCKET' | 'HEALTH';
+  position: Position;
+  respawnTime?: number; // If set, item is currently hidden/respawning
 }
 
 export enum GameStatus {
@@ -20,7 +38,6 @@ export enum GameStatus {
   ERROR = 'ERROR',
 }
 
-// Optimization: Union type for payloads to enforce strict structure
 export type PeerMessage = 
-  | [number, Record<string, any>] // UPDATE: [OP.UPDATE, { playerId: [x,y,z,yaw,health,seq] }]
-  | [number, string, string];     // HIT: [OP.HIT, targetId, shooterId]
+  | [number, any] 
+  | [number, any, any];
